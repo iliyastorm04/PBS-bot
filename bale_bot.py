@@ -7,6 +7,9 @@ import json
 import os
 import asyncio
 import time
+from PIL import Image, ImageDraw, ImageFont
+import arabic_reshaper
+from bidi.algorithm import get_display
 
 BOT_TOKEN = "545865286:AXfEStZsKuKvMUR_b7LYhjnR0G5y-oLhCJE"
 client = Bot(token=BOT_TOKEN)
@@ -26,6 +29,7 @@ ANTISPAM_FILE = "antispam.json"
 last_activity = {}
 last_nudge = {}
 known_chats = {}
+join_leave_stats = {}
 
 # تنظیمات ضد اسپم و اخطار
 antispam_settings = {}
@@ -445,6 +449,125 @@ def get_calendar_keyboard():
     return {"inline_keyboard": [[{"text": "📅 تقویم امروز", "callback_data": "calendar"}]]}
 
 
+def load_join_leave():
+    global join_leave_stats
+    join_leave_stats = load_json("join_leave.json")
+
+
+def track_join(chat_id):
+    chat_key = str(chat_id)
+    if chat_key not in join_leave_stats:
+        join_leave_stats[chat_key] = {"joined": 0, "left": 0}
+    join_leave_stats[chat_key]["joined"] += 1
+    save_json("join_leave.json", join_leave_stats)
+
+
+def track_leave(chat_id):
+    chat_key = str(chat_id)
+    if chat_key not in join_leave_stats:
+        join_leave_stats[chat_key] = {"joined": 0, "left": 0}
+    join_leave_stats[chat_key]["left"] += 1
+    save_json("join_leave.json", join_leave_stats)
+
+
+def format_persian(text):
+    try:
+        reshaped = arabic_reshaper.reshape(text)
+        return reshaped
+    except:
+        return text
+
+
+def create_stats_image(chat_id, chat_title):
+    try:
+        data = load_json(STATS_FILE)
+        chat_key = str(chat_id)
+        members_data = data.get(chat_key, {})
+        total_messages = sum(m.get("messages", 0) for m in members_data.values())
+        total_members = len(members_data)
+        jl = join_leave_stats.get(chat_key, {"joined": 0, "left": 0})
+        joined = jl.get("joined", 0)
+        left = jl.get("left", 0)
+        top_users = sorted(members_data.items(), key=lambda x: x[1].get("messages", 0), reverse=True)[:3]
+        now = jdatetime.datetime.now()
+        weekdays = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
+        months = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
+        date_str = f"{weekdays[now.weekday()]} {now.day} {months[now.month - 1]} {now.year}"
+        width = 700
+        height = 700
+        img = Image.new('RGB', (width, height), color=(15, 20, 35))
+        draw = ImageDraw.Draw(img)
+        draw.rectangle([(10, 10), (width - 10, height - 10)], outline=(0, 200, 150), width=3)
+        try:
+            font_title = ImageFont.truetype("/data/data/com.termux/files/home/Vazirmatn-Bold.ttf", 34)
+            font_big = ImageFont.truetype("/data/data/com.termux/files/home/Vazirmatn-Bold.ttf", 26)
+            font_med = ImageFont.truetype("/data/data/com.termux/files/home/Vazirmatn-Bold.ttf", 22)
+            font_small = ImageFont.truetype("/data/data/com.termux/files/home/Vazirmatn-Bold.ttf", 18)
+        except:
+            font_title = ImageFont.load_default()
+            font_big = font_title
+            font_med = font_title
+            font_small = font_title
+
+        def draw_rtl(y, text, font, color=(255, 255, 255)):
+            t = format_persian(text)
+            bbox = draw.textbbox((0, 0), t, font=font)
+            w = bbox[2] - bbox[0]
+            draw.text((width - 40 - w, y), t, font=font, fill=color)
+
+        draw_rtl(40, "آمار گروه", font_title, (0, 255, 200))
+        draw.line([(40, 100), (width - 40, 100)], fill=(0, 200, 150), width=2)
+        draw_rtl(125, f"گروه: {chat_title}", font_med, (200, 200, 255))
+        y = 185
+        draw_rtl(y, f"اعضای فعلی: {total_members}", font_big, (255, 255, 255))
+        y += 50
+        draw_rtl(y, f"اعضای جدید: {joined}", font_big, (100, 255, 150))
+        y += 50
+        draw_rtl(y, f"اعضای خارج شده: {left}", font_big, (255, 150, 150))
+        y += 50
+        draw_rtl(y, f"مجموع پیام‌ها: {total_messages}", font_big, (255, 220, 100))
+        draw.line([(40, y + 70), (width - 40, y + 70)], fill=(0, 200, 150), width=2)
+        y += 95
+        draw_rtl(y, "3 کاربر برتر:", font_big, (255, 215, 0))
+        y += 55
+        medals = ["1.", "2.", "3."]
+        if not top_users:
+            draw_rtl(y, "هنوز کسی پیام نداده", font_med, (180, 180, 180))
+        for i, (uid, udata) in enumerate(top_users):
+            if i >= 3:
+                break
+            name = udata.get("first_name", "کاربر")
+            uname = udata.get("username")
+            msgs = udata.get("messages", 0)
+            if uname:
+                line = f"{medals[i]} {name} (@{uname}) - {msgs} پیام"
+            else:
+                line = f"{medals[i]} {name} - {msgs} پیام"
+            draw_rtl(y, line, font_med, (220, 220, 255))
+            y += 48
+        draw.line([(40, height - 90), (width - 40, height - 90)], fill=(0, 200, 150), width=2)
+        draw_rtl(height - 70, f"تاریخ: {date_str}", font_small, (180, 180, 200))
+        output_path = f"/data/data/com.termux/files/home/stats_{chat_id}.png"
+        img.save(output_path)
+        return output_path
+    except Exception as e:
+        print(f"Stats image error: {e}")
+        return None
+
+
+async def send_photo(chat_id, photo_path, caption=None):
+    url = f"https://tapi.bale.ai/bot{BOT_TOKEN}/sendPhoto"
+    async with aiohttp.ClientSession() as session:
+        with open(photo_path, 'rb') as f:
+            data = aiohttp.FormData()
+            data.add_field('chat_id', str(chat_id))
+            data.add_field('photo', f, filename='stats.png', content_type='image/png')
+            if caption:
+                data.add_field('caption', caption)
+            async with session.post(url, data=data) as resp:
+                return await resp.json()
+
+
 async def api_call(method, payload):
     url = f"https://tapi.bale.ai/bot{BOT_TOKEN}/{method}"
     async with aiohttp.ClientSession() as session:
@@ -548,6 +671,7 @@ async def on_ready():
     print(f"✨ {client.user} با موفقیت روشن شد و آماده‌ی خدمته!")
     load_known_chats()
     load_all_data()
+    load_join_leave()
     asyncio.create_task(silence_checker())
 
 
@@ -646,6 +770,7 @@ async def on_member_chat_join(message, chat, user):
             return
         chat_id = chat.id
         name = user.first_name or "دوست عزیز"
+        track_join(chat_id)
         join_time = get_persian_time()
         welcome = random.choice(WELCOME_MESSAGES).format(name=name)
         welcome += f"\n\n🕐 **زمان ورود:** {join_time}"
@@ -664,6 +789,7 @@ async def on_member_chat_leave(message, chat, user):
             return
         chat_id = chat.id
         name = user.first_name or "دوست عزیز"
+        track_leave(chat_id)
         leave_time = get_persian_time()
         goodbye = random.choice(GOODBYE_MESSAGES).format(name=name)
         goodbye += f"\n\n🕐 **زمان خروج:** {leave_time}"
@@ -839,6 +965,21 @@ async def on_message(message: Message):
         return
 
     # ===== تگ =====
+    if text == "آمار" or text == "/stats":
+        if not is_group(message.chat):
+            await message.reply("فقط توی گروه کار می‌کنه.")
+            return
+        if not await is_admin(chat_id, user_id):
+            await message.reply("فقط ادمین‌ها می‌تونن آمار ببینن.")
+            return
+        chat_title = getattr(message.chat, 'title', None) or "گروه"
+        img_path = create_stats_image(chat_id, chat_title)
+        if img_path:
+            await send_photo(chat_id, img_path)
+        else:
+            await message.reply("خطا در ساخت تصویر آمار.")
+        return
+
     if text == "تگ":
         if not is_group(message.chat):
             await message.reply("⚠️ این دستور فقط توی گروه کار می‌کنه.")
