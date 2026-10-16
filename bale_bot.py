@@ -45,6 +45,22 @@ def save_json(filename, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def get_persian_time():
+    """گرفتن تاریخ و ساعت شمسی به صورت متنی"""
+    try:
+        now = jdatetime.datetime.now()
+        weekdays = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
+        months = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
+        weekday_name = weekdays[now.weekday()]
+        month_name = months[now.month - 1]
+        return f"{weekday_name} {now.day} {month_name} {now.year} - ساعت {now.strftime('%H:%M:%S')}"
+    except Exception as e:
+        print(f"Time error: {e}")
+        import datetime
+        now = datetime.datetime.now()
+        return now.strftime("%Y/%m/%d - %H:%M:%S")
+
+
 async def set_nickname(user_id, nickname, set_by):
     data = load_json(NICKNAME_FILE)
     data[str(user_id)] = {"nickname": nickname, "set_by": str(set_by)}
@@ -183,6 +199,7 @@ SALAM_RESPONSES = [
 
 SALAM_KEYWORDS = ["سلام", "سلام علیکم", "سلام علیک", "سلام دوستان", "سلام بچه‌ها"]
 
+
 SILENT_MESSAGES = [
     "🔔 سلام سلام! چقدر اینجا ساکته!\n\nکسی اینجا نیست یه سلامی بکنه؟ 😊\nمن دلم براتون تنگ شده بود! 💚",
     "🍃 هوووم... اینجا بوی سکوت می‌ده!\n\nکجایید رفقا؟ بیاید یه گپی بزنیم، یه خنده‌ای بکنیم! 😄\nدلم برای صداتون تنگ شده 🥺",
@@ -222,6 +239,7 @@ GOODBYE_MESSAGES = [
     "🌈 **{name}** عزیز، رفتنت دلگیرمون کرد...\n\nولی بهترین آرزوها رو برات داریم 🌸\nخدانگهدار رفیق! 💚",
 ]
 
+
 ABOUT_TEXT = (
     "🌘 **𝙻𝚒𝚍𝚘𝚌𝚊𝚒𝚗𝚎 𝚜𝚝𝚞𝚍𝚒𝚘** 🩸\n\n"
     "═══════════════════════\n\n"
@@ -246,6 +264,63 @@ ABOUT_TEXT = (
     "برای سفارش یا مشاوره، به یکی از آیدی‌های بالا پیام بدید.\n\n"
     "💚 ممنون که به ما اعتماد می‌کنید! 🌹"
 )
+
+
+def get_calendar_text():
+    """متن تقویم با تاریخ دقیق شمسی"""
+    try:
+        now = jdatetime.datetime.now()
+        
+        weekdays = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
+        months = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
+        
+        weekday_name = weekdays[now.weekday()]
+        month_name = months[now.month - 1]
+        
+        day = now.day
+        month = now.month
+        year = now.year
+        
+        date_str = f"{weekday_name} {day} {month_name} {year}"
+        time_str = now.strftime("%H:%M:%S")
+        
+        if month in [1, 2, 3]:
+            season = "🌸 بهار"
+        elif month in [4, 5, 6]:
+            season = "☀️ تابستان"
+        elif month in [7, 8, 9]:
+            season = "🍂 پاییز"
+        else:
+            season = "❄️ زمستان"
+        
+        text = (
+            f"📅 **تقویم امروز**\n\n"
+            f"═══════════════════\n\n"
+            f"🗓️ **تاریخ:** {date_str}\n"
+            f"🕐 **ساعت:** {time_str}\n\n"
+            f"───────────────────\n"
+            f"📌 **جزئیات:**\n"
+            f"🔸 روز: {weekday_name}\n"
+            f"🔹 ماه: {month_name}\n"
+            f"🔸 سال: {year}\n"
+            f"🔹 فصل: {season}\n\n"
+            f"═══════════════════\n\n"
+            f"💚 امیدوارم امروزت پر از لحظه‌های خوب باشه! ✨"
+        )
+        return text
+    except Exception as e:
+        print(f"Calendar error: {e}")
+        return "❌ متاسفانه در نمایش تقویم خطایی پیش اومد."
+
+
+def get_calendar_keyboard():
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "📅 تقویم امروز", "callback_data": "calendar"}
+            ]
+        ]
+    }
 
 
 async def api_call(method, payload):
@@ -284,6 +359,7 @@ def get_help_text():
         "👤 دستورات عمومی:\n"
         "پروفایل → نمایش اطلاعات و آمار\n"
         "تایم یا ساعت → نمایش ساعت و تاریخ\n"
+        "تقویم یا تاریخ → نمایش تقویم شمسی\n"
         "ربات → صدا زدن ربات\n"
         "سلام → ربات جواب سلام می‌ده\n\n"
         "👮‍♂️ دستورات مدیریتی (فقط ادمین‌ها):\n"
@@ -370,7 +446,8 @@ async def on_callback(callback_query):
         if callback_data == "help_menu":
             await api_call("sendMessage", {
                 "chat_id": chat_id,
-                "text": get_help_text()
+                "text": get_help_text(),
+                "reply_markup": get_calendar_keyboard()
             })
 
         elif callback_data == "about_us":
@@ -392,6 +469,12 @@ async def on_callback(callback_query):
                 "text": support_text
             })
 
+        elif callback_data == "calendar":
+            await api_call("sendMessage", {
+                "chat_id": chat_id,
+                "text": get_calendar_text()
+            })
+
     except Exception as e:
         print(f"Callback error: {e}")
 
@@ -406,8 +489,11 @@ async def on_member_chat_join(message, chat, user):
 
         chat_id = chat.id
         name = user.first_name or "دوست عزیز"
+        join_time = get_persian_time()
 
         welcome = random.choice(WELCOME_MESSAGES).format(name=name)
+        welcome += f"\n\n🕐 **زمان ورود:** {join_time}"
+
         await api_call("sendMessage", {
             "chat_id": chat_id,
             "text": welcome
@@ -428,8 +514,11 @@ async def on_member_chat_leave(message, chat, user):
 
         chat_id = chat.id
         name = user.first_name or "دوست عزیز"
+        leave_time = get_persian_time()
 
         goodbye = random.choice(GOODBYE_MESSAGES).format(name=name)
+        goodbye += f"\n\n🕐 **زمان خروج:** {leave_time}"
+
         await api_call("sendMessage", {
             "chat_id": chat_id,
             "text": goodbye
@@ -496,11 +585,20 @@ async def on_message(message: Message):
         return
 
     if text == "/help" or text == "راهنما":
-        await message.reply(get_help_text())
+        await api_call("sendMessage", {
+            "chat_id": chat_id,
+            "text": get_help_text(),
+            "reply_markup": get_calendar_keyboard()
+        })
         return
 
     if text == "درباره ما" or text == "/about":
         await message.reply(ABOUT_TEXT)
+        return
+
+    if text in ["تقویم", "تاریخ"]:
+        calendar_text = get_calendar_text()
+        await message.reply(calendar_text)
         return
 
     if text == "تگ":
@@ -521,7 +619,6 @@ async def on_message(message: Message):
         mentions = []
         for member_id, member_data in members.items():
             member_username = member_data.get("username")
-            member_name = member_data.get("first_name", "کاربر")
             if member_username:
                 mentions.append(f"@{member_username}")
 
@@ -541,6 +638,7 @@ async def on_message(message: Message):
             "text": tag_text
         })
         return
+
 
     if text == "پروفایل" or text == "/profile":
         if message.reply_to_message:
@@ -586,7 +684,6 @@ async def on_message(message: Message):
         await message.reply(reply)
         return
 
-
     if text.startswith("لقب ") or text.startswith("لقب بذار "):
         if not await is_admin(chat_id, user_id):
             await message.reply("⚠️ عزیزم، فقط ادمین‌های گروه می‌تونن لقب تعیین کنن. 🙏")
@@ -623,6 +720,7 @@ async def on_message(message: Message):
         await message.reply(reply)
         return
 
+
     if text == "حذف لقب" or text == "پاک کردن لقب":
         if not await is_admin(chat_id, user_id):
             await message.reply("⚠️ عزیزم، فقط ادمین‌های گروه می‌تونن لقب رو حذف کنن. 🙏")
@@ -645,8 +743,12 @@ async def on_message(message: Message):
 
     if text in ["تایم", "ساعت"]:
         try:
-            now = jdatetime.datetime.now(locale='fa_IR')
-            date_str = now.strftime("%A %d %B %Y")
+            now = jdatetime.datetime.now()
+            weekdays = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
+            months = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
+            weekday_name = weekdays[now.weekday()]
+            month_name = months[now.month - 1]
+            date_str = f"{weekday_name} {now.day} {month_name} {now.year}"
             time_str = now.strftime("%H:%M:%S")
         except Exception:
             import datetime
