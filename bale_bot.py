@@ -20,14 +20,24 @@ except locale.Error:
 NICKNAME_FILE = "nicknames.json"
 STATS_FILE = "stats.json"
 CHATS_FILE = "chats.json"
+WARNINGS_FILE = "warnings.json"
+ANTISPAM_FILE = "antispam.json"
 
 last_activity = {}
 last_nudge = {}
 known_chats = {}
 
+# تنظیمات ضد اسپم و اخطار
+antispam_settings = {}
+user_warnings = {}
+recent_msgs = {}
+
 SILENT_THRESHOLD = 30 * 60
 NUDGE_COOLDOWN = 60 * 60
 CHECK_INTERVAL = 60
+
+FLOOD_THRESHOLD = 3
+FLOOD_WINDOW = 1.0
 
 
 def load_json(filename):
@@ -45,8 +55,13 @@ def save_json(filename, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def load_all_data():
+    global antispam_settings, user_warnings
+    antispam_settings = load_json(ANTISPAM_FILE)
+    user_warnings = load_json(WARNINGS_FILE)
+
+
 def get_persian_time():
-    """گرفتن تاریخ و ساعت شمسی به صورت متنی"""
     try:
         now = jdatetime.datetime.now()
         weekdays = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
@@ -92,28 +107,21 @@ def add_message_count(chat_id, user_id, username=None, first_name=None):
     data = load_json(STATS_FILE)
     chat_key = str(chat_id)
     user_key = str(user_id)
-
     if chat_key not in data:
         data[chat_key] = {}
     if user_key not in data[chat_key]:
         data[chat_key][user_key] = {"messages": 0, "points": 0, "username": username, "first_name": first_name}
-
     if username:
         data[chat_key][user_key]["username"] = username
     if first_name:
         data[chat_key][user_key]["first_name"] = first_name
-
     old_points = data[chat_key][user_key]["points"]
     old_level = get_level(old_points)
-
     data[chat_key][user_key]["messages"] += 1
     data[chat_key][user_key]["points"] += 1
-
     new_points = data[chat_key][user_key]["points"]
     new_level = get_level(new_points)
-
     save_json(STATS_FILE, data)
-
     return {
         "messages": data[chat_key][user_key]["messages"],
         "points": new_points,
@@ -127,7 +135,6 @@ def get_user_stats(chat_id, user_id):
     data = load_json(STATS_FILE)
     chat_key = str(chat_id)
     user_key = str(user_id)
-
     if chat_key in data and user_key in data[chat_key]:
         return data[chat_key][user_key]
     return {"messages": 0, "points": 0}
@@ -148,6 +155,137 @@ def load_known_chats():
 
 def save_known_chats():
     save_json(CHATS_FILE, known_chats)
+
+
+# ============ توابع ضد اسپم و اخطار ============
+
+def get_antispam(chat_id):
+    chat_key = str(chat_id)
+    if chat_key not in antispam_settings:
+        antispam_settings[chat_key] = {"enabled": False, "limit": 5}
+        save_json(ANTISPAM_FILE, antispam_settings)
+    return antispam_settings[chat_key]
+
+
+def set_antispam(chat_id, enabled):
+    chat_key = str(chat_id)
+    if chat_key not in antispam_settings:
+        antispam_settings[chat_key] = {"enabled": False, "limit": 5}
+    antispam_settings[chat_key]["enabled"] = enabled
+    save_json(ANTISPAM_FILE, antispam_settings)
+
+
+def set_warning_limit(chat_id, limit):
+    chat_key = str(chat_id)
+    if chat_key not in antispam_settings:
+        antispam_settings[chat_key] = {"enabled": False, "limit": 5}
+    antispam_settings[chat_key]["limit"] = limit
+    save_json(ANTISPAM_FILE, antispam_settings)
+
+
+def get_warning_limit(chat_id):
+    return get_antispam(chat_id).get("limit", 5)
+
+
+def get_warning(chat_id, user_id):
+    chat_key = str(chat_id)
+    user_key = str(user_id)
+    if chat_key in user_warnings and user_key in user_warnings[chat_key]:
+        return user_warnings[chat_key][user_key]
+    return 0
+
+
+def set_warning(chat_id, user_id, count):
+    chat_key = str(chat_id)
+    user_key = str(user_id)
+    if chat_key not in user_warnings:
+        user_warnings[chat_key] = {}
+    if count <= 0:
+        if user_key in user_warnings[chat_key]:
+            del user_warnings[chat_key][user_key]
+    else:
+        user_warnings[chat_key][user_key] = count
+    save_json(WARNINGS_FILE, user_warnings)
+
+
+def check_flood(chat_id, user_id, msg_id):
+    key = (chat_id, user_id)
+    now = time.time()
+    if key not in recent_msgs:
+        recent_msgs[key] = []
+    recent_msgs[key] = [(t, m) for t, m in recent_msgs[key] if now - t < 3.0]
+    recent_msgs[key].append((now, msg_id))
+    recent_one_sec = [(t, m) for t, m in recent_msgs[key] if now - t < FLOOD_WINDOW]
+    if len(recent_one_sec) > FLOOD_THRESHOLD:
+        msgs_to_delete = [m for t, m in recent_msgs[key]]
+        recent_msgs[key] = []
+        return msgs_to_delete
+    return None
+
+
+async def delete_messages(chat_id, msg_ids):
+    for mid in msg_ids:
+        try:
+            await api_call("deleteMessage", {"chat_id": chat_id, "message_id": mid})
+        except:
+            pass
+
+
+async def mute_user_for(chat_id, user_id, seconds):
+    try:
+        from datetime import datetime, timedelta
+        until = int((datetime.now() + timedelta(seconds=seconds)).timestamp())
+    except:
+        until = int(time.time() + seconds)
+    result = await api_call("restrictChatMember", {
+        "chat_id": chat_id,
+        "user_id": user_id,
+        "permissions": {
+            "can_send_messages": False,
+            "can_send_media_messages": False,
+            "can_send_other_messages": False,
+            "can_add_web_page_previews": False
+        },
+        "until_date": until
+    })
+    return result
+
+
+async def apply_warning(chat_id, user_id, user_name):
+    limit = get_warning_limit(chat_id)
+    current = get_warning(chat_id, user_id) + 1
+    set_warning(chat_id, user_id, current)
+    if current >= limit:
+        set_warning(chat_id, user_id, 0)
+        try:
+            await client.ban_chat_member(chat_id, user_id)
+        except:
+            pass
+        await api_call("sendMessage", {
+            "chat_id": chat_id,
+            "text": f"🚫 **{user_name}** جان، به خاطر رسیدن اخطارها به سقف ({current}/{limit})، از گروه اخراج شدی! 👋"
+        })
+        return "kick"
+    elif limit == 5 and current == 4:
+        await mute_user_for(chat_id, user_id, 3 * 3600)
+        await api_call("sendMessage", {
+            "chat_id": chat_id,
+            "text": f"🔇 **{user_name}** جان، به خاطر اخطارها ۳ ساعت سکوت شدی!\n📊 اخطار: **{current}/{limit}**"
+        })
+        return "mute_3h"
+    elif limit == 5 and current == 3:
+        await mute_user_for(chat_id, user_id, 1 * 3600)
+        await api_call("sendMessage", {
+            "chat_id": chat_id,
+            "text": f"🔇 **{user_name}** جان، به خاطر اخطارها ۱ ساعت سکوت شدی!\n📊 اخطار: **{current}/{limit}**"
+        })
+        return "mute_1h"
+    else:
+        await api_call("sendMessage", {
+            "chat_id": chat_id,
+            "text": f"⚠️ **{user_name}** جان، یه اخطار گرفتی!\n📊 اخطار: **{current}/{limit}**"
+        })
+        return "warn"
 
 
 CALL_RESPONSES = [
@@ -184,6 +322,7 @@ LEVELUP_REPLIES = [
     "🔥 **{name} داری می‌درخشی!** 💥\n\nبه **لول {level}** رسیدی و امتیازت شد **{points}**! 💎\n\nهمین انگیزه رو حفظ کن، قهرمان! 🏆",
 ]
 
+
 SALAM_RESPONSES = [
     "سلام {name} جان! 🌹 چه خوب که اومدی، دلم برات تنگ شده بود! 💚",
     "سلام سلام! 🌸 {name} عزیز، چطوری؟ امیدوارم روزت پر از انرژی باشه! ✨",
@@ -198,7 +337,6 @@ SALAM_RESPONSES = [
 ]
 
 SALAM_KEYWORDS = ["سلام", "سلام علیکم", "سلام علیک", "سلام دوستان", "سلام بچه‌ها"]
-
 
 SILENT_MESSAGES = [
     "🔔 سلام سلام! چقدر اینجا ساکته!\n\nکسی اینجا نیست یه سلامی بکنه؟ 😊\nمن دلم براتون تنگ شده بود! 💚",
@@ -267,32 +405,22 @@ ABOUT_TEXT = (
 
 
 def get_calendar_text():
-    """متن تقویم با تاریخ دقیق شمسی"""
     try:
         now = jdatetime.datetime.now()
-        
         weekdays = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
         months = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
-        
         weekday_name = weekdays[now.weekday()]
         month_name = months[now.month - 1]
-        
-        day = now.day
-        month = now.month
-        year = now.year
-        
-        date_str = f"{weekday_name} {day} {month_name} {year}"
+        date_str = f"{weekday_name} {now.day} {month_name} {now.year}"
         time_str = now.strftime("%H:%M:%S")
-        
-        if month in [1, 2, 3]:
+        if now.month in [1, 2, 3]:
             season = "🌸 بهار"
-        elif month in [4, 5, 6]:
+        elif now.month in [4, 5, 6]:
             season = "☀️ تابستان"
-        elif month in [7, 8, 9]:
+        elif now.month in [7, 8, 9]:
             season = "🍂 پاییز"
         else:
             season = "❄️ زمستان"
-        
         text = (
             f"📅 **تقویم امروز**\n\n"
             f"═══════════════════\n\n"
@@ -302,7 +430,7 @@ def get_calendar_text():
             f"📌 **جزئیات:**\n"
             f"🔸 روز: {weekday_name}\n"
             f"🔹 ماه: {month_name}\n"
-            f"🔸 سال: {year}\n"
+            f"🔸 سال: {now.year}\n"
             f"🔹 فصل: {season}\n\n"
             f"═══════════════════\n\n"
             f"💚 امیدوارم امروزت پر از لحظه‌های خوب باشه! ✨"
@@ -314,13 +442,7 @@ def get_calendar_text():
 
 
 def get_calendar_keyboard():
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "📅 تقویم امروز", "callback_data": "calendar"}
-            ]
-        ]
-    }
+    return {"inline_keyboard": [[{"text": "📅 تقویم امروز", "callback_data": "calendar"}]]}
 
 
 async def api_call(method, payload):
@@ -356,26 +478,30 @@ def get_warm_reply(action, user_name=""):
 def get_help_text():
     return (
         "🌟 خوش اومدی به پنل راهنمای ربات مدیریت گروه PBS! 🌟\n\n"
-        "👤 دستورات عمومی:\n"
+        "👤 **دستورات عمومی:**\n"
         "پروفایل → نمایش اطلاعات و آمار\n"
         "تایم یا ساعت → نمایش ساعت و تاریخ\n"
         "تقویم یا تاریخ → نمایش تقویم شمسی\n"
         "ربات → صدا زدن ربات\n"
         "سلام → ربات جواب سلام می‌ده\n\n"
-        "👮‍♂️ دستورات مدیریتی (فقط ادمین‌ها):\n"
+        "👮‍♂️ **دستورات مدیریتی (فقط ادمین‌ها):**\n"
         "🚪 اخراج: بن / کیک / اخراج / سیک\n"
         "🎉 آزاد کردن: آنبن / حذف بن\n"
         "🔇 سکوت: سکوت / میوت\n"
         "🔊 لغو سکوت: حذف سکوت / آن میوت\n"
         "📢 تگ کردن اعضا: تگ\n\n"
-        "🏷️ دستورات لقب (فقط ادمین‌ها):\n"
+        "⚠️ **سیستم اخطار:**\n"
+        "ریپلای + اخطار → اخطار دادن\n"
+        "ریپلای + حذف اخطار → حذف یه اخطار\n"
+        "ریپلای + حذف همه اخطارها → حذف کل اخطارها\n\n"
+        "🛡️ **ضد اسپم:**\n"
+        "ضد اسپم روشن / فعال → روشن کردن\n"
+        "تنظیم اخطار → تنظیم تعداد اخطار\n\n"
+        "🏷️ **دستورات لقب (فقط ادمین‌ها):**\n"
         "ریپلای + لقب [متن] → ثبت لقب\n"
         "ریپلای + حذف لقب → حذف لقب\n\n"
         "📊 سیستم لول: هر ۲۵ امتیاز = ۱ لول\n"
-        "با هر پیام، ۱ امتیاز می‌گیری!\n\n"
-        "🔔 سیستم ضد سکوت:\n"
-        "اگه گروه ۳۰ دقیقه ساکت بمونه، ربات یه پیام گرم می‌فرسته.\n\n"
-        "📌 نکته: دستورات مدیریتی و لقب نیاز به ریپلای دارن."
+        "🔔 سیستم ضد سکوت: اگه گروه ۳۰ دقیقه ساکت بمونه، ربات پیام می‌فرسته."
     )
 
 
@@ -396,34 +522,23 @@ async def silence_checker():
         try:
             await asyncio.sleep(CHECK_INTERVAL)
             now = time.time()
-
             for chat_id_str, title in list(known_chats.items()):
                 try:
                     chat_id = int(chat_id_str)
                 except:
                     continue
-
                 last = last_activity.get(chat_id, 0)
                 last_nudge_time = last_nudge.get(chat_id, 0)
-
                 if last == 0:
                     continue
-
                 silent_for = now - last
-
                 if silent_for >= SILENT_THRESHOLD and (now - last_nudge_time) >= NUDGE_COOLDOWN:
                     msg = random.choice(SILENT_MESSAGES)
-                    result = await api_call("sendMessage", {
-                        "chat_id": chat_id,
-                        "text": msg
-                    })
+                    result = await api_call("sendMessage", {"chat_id": chat_id, "text": msg})
                     if result.get("ok"):
                         last_nudge[chat_id] = now
                         last_activity[chat_id] = now
                         print(f"✅ پیام سکوت به گروه {title} ({chat_id}) فرستاده شد.")
-                    else:
-                        print(f"❌ خطا در ارسال به {chat_id}: {result.get('description')}")
-
         except Exception as e:
             print(f"Silence checker error: {e}")
 
@@ -432,6 +547,7 @@ async def silence_checker():
 async def on_ready():
     print(f"✨ {client.user} با موفقیت روشن شد و آماده‌ی خدمته!")
     load_known_chats()
+    load_all_data()
     asyncio.create_task(silence_checker())
 
 
@@ -440,6 +556,8 @@ async def on_callback(callback_query):
     try:
         callback_data = callback_query.data
         chat_id = callback_query.message.chat.id
+        user_id = callback_query.from_user.id
+        user_name = callback_query.from_user.first_name
 
         print(f"🔍 کلیک روی دکمه: {callback_data}")
 
@@ -451,28 +569,68 @@ async def on_callback(callback_query):
             })
 
         elif callback_data == "about_us":
-            await api_call("sendMessage", {
-                "chat_id": chat_id,
-                "text": ABOUT_TEXT
-            })
+            await api_call("sendMessage", {"chat_id": chat_id, "text": ABOUT_TEXT})
 
         elif callback_data == "support":
             support_text = (
-                "💬 پشتیبانی ربات PBS\n\n"
+                "💬 **پشتیبانی ربات PBS**\n\n"
                 "اگه سوال، مشکل یا پیشنهادی داری، می‌تونی به آیدی‌های زیر پیام بدی:\n\n"
                 "👤 @pv_storms\n"
                 "👤 @pv_ahzar\n\n"
                 "من همیشه خوشحال می‌شم کمکت کنم! 💚"
             )
-            await api_call("sendMessage", {
-                "chat_id": chat_id,
-                "text": support_text
-            })
+            await api_call("sendMessage", {"chat_id": chat_id, "text": support_text})
 
         elif callback_data == "calendar":
+            await api_call("sendMessage", {"chat_id": chat_id, "text": get_calendar_text()})
+
+        elif callback_data == "warn_limit_3":
+            if not await is_admin(chat_id, user_id):
+                return
+            set_warning_limit(chat_id, 3)
             await api_call("sendMessage", {
                 "chat_id": chat_id,
-                "text": get_calendar_text()
+                "text": "✅ تعداد اخطار روی **۳** تنظیم شد."
+            })
+
+        elif callback_data == "warn_limit_5":
+            if not await is_admin(chat_id, user_id):
+                return
+            set_warning_limit(chat_id, 5)
+            await api_call("sendMessage", {
+                "chat_id": chat_id,
+                "text": "✅ تعداد اخطار روی **۵** تنظیم شد."
+            })
+
+        elif callback_data == "warn_limit_save":
+            if not await is_admin(chat_id, user_id):
+                return
+            current = get_warning_limit(chat_id)
+            await api_call("sendMessage", {
+                "chat_id": chat_id,
+                "text": f"💾 تنظیمات ذخیره شد.\n📊 تعداد اخطار فعلی: **{current}**"
+            })
+
+        elif callback_data == "antispam_on":
+            if not await is_admin(chat_id, user_id):
+                return
+            set_antispam(chat_id, True)
+            keyboard = {"inline_keyboard": [[{"text": "🛑 خاموش کردن ضد اسپم", "callback_data": "antispam_off"}]]}
+            await api_call("sendMessage", {
+                "chat_id": chat_id,
+                "text": "🟢 **ضد اسپم روشن شد!**\n\nاز این به بعد اگه کاربری بیش از ۳ پیام در ۱ ثانیه بفرسته، پیام‌هاش حذف و اخطار می‌گیره.\n\nبرای خاموش کردن روی دکمه‌ی زیر بزنید 👇",
+                "reply_markup": keyboard
+            })
+
+        elif callback_data == "antispam_off":
+            if not await is_admin(chat_id, user_id):
+                return
+            set_antispam(chat_id, False)
+            keyboard = {"inline_keyboard": [[{"text": "🟢 روشن کردن ضد اسپم", "callback_data": "antispam_on"}]]}
+            await api_call("sendMessage", {
+                "chat_id": chat_id,
+                "text": "🔴 **ضد اسپم خاموش شد!**\n\nاز این به بعد پیام‌ها بررسی نمی‌شن.\n\nبرای روشن کردن روی دکمه‌ی زیر بزنید 👇",
+                "reply_markup": keyboard
             })
 
     except Exception as e:
@@ -486,20 +644,13 @@ async def on_member_chat_join(message, chat, user):
             return
         if user.is_bot:
             return
-
         chat_id = chat.id
         name = user.first_name or "دوست عزیز"
         join_time = get_persian_time()
-
         welcome = random.choice(WELCOME_MESSAGES).format(name=name)
         welcome += f"\n\n🕐 **زمان ورود:** {join_time}"
-
-        await api_call("sendMessage", {
-            "chat_id": chat_id,
-            "text": welcome
-        })
+        await api_call("sendMessage", {"chat_id": chat_id, "text": welcome})
         print(f"👋 خوش‌آمدگویی به {name} در گروه {chat_id}")
-
     except Exception as e:
         print(f"Welcome error: {e}")
 
@@ -511,20 +662,13 @@ async def on_member_chat_leave(message, chat, user):
             return
         if user.is_bot:
             return
-
         chat_id = chat.id
         name = user.first_name or "دوست عزیز"
         leave_time = get_persian_time()
-
         goodbye = random.choice(GOODBYE_MESSAGES).format(name=name)
         goodbye += f"\n\n🕐 **زمان خروج:** {leave_time}"
-
-        await api_call("sendMessage", {
-            "chat_id": chat_id,
-            "text": goodbye
-        })
+        await api_call("sendMessage", {"chat_id": chat_id, "text": goodbye})
         print(f"👋 خداحافظی با {name} از گروه {chat_id}")
-
     except Exception as e:
         print(f"Goodbye error: {e}")
 
@@ -547,16 +691,35 @@ async def on_message(message: Message):
             known_chats[str(chat_id)] = chat_title
             save_known_chats()
 
+    # ===== ضد اسپم =====
+    is_user_admin = False
+    if is_group(message.chat):
+        is_user_admin = await is_admin(chat_id, user_id)
+
+    if is_group(message.chat) and not is_user_admin:
+        spam = get_antispam(chat_id)
+        if spam.get("enabled", False):
+            flood_msgs = check_flood(chat_id, user_id, message.id)
+            if flood_msgs:
+                await delete_messages(chat_id, flood_msgs)
+                result = await apply_warning(chat_id, user_id, user_name)
+                if result == "kick":
+                    await api_call("sendMessage", {
+                        "chat_id": chat_id,
+                        "text": f"🗑️ تمام پیام‌های اسپم **{user_name}** پاک شدن."
+                    })
+                return
+
+    # ===== ثبت آمار =====
     stats = add_message_count(chat_id, user_id, username=username, first_name=user_name)
 
     if stats["leveled_up"]:
         level_msg = random.choice(LEVELUP_REPLIES).format(
-            name=user_name,
-            level=stats["new_level"],
-            points=stats["points"]
+            name=user_name, level=stats["new_level"], points=stats["points"]
         )
         await message.reply(level_msg)
 
+    # ===== دستورات عمومی =====
     if text == "/start":
         reply_text = (
             f"سلام {user_name} جان! 🌹\n\n"
@@ -566,29 +729,17 @@ async def on_message(message: Message):
         )
         keyboard = {
             "inline_keyboard": [
-                [
-                    {"text": "📖 راهنما", "callback_data": "help_menu"}
-                ],
-                [
-                    {"text": "🌘 درباره ما", "callback_data": "about_us"}
-                ],
-                [
-                    {"text": "💬 پشتیبانی", "callback_data": "support"}
-                ]
+                [{"text": "📖 راهنما", "callback_data": "help_menu"}],
+                [{"text": "🌘 درباره ما", "callback_data": "about_us"}],
+                [{"text": "💬 پشتیبانی", "callback_data": "support"}]
             ]
         }
-        await api_call("sendMessage", {
-            "chat_id": chat_id,
-            "text": reply_text,
-            "reply_markup": keyboard
-        })
+        await api_call("sendMessage", {"chat_id": chat_id, "text": reply_text, "reply_markup": keyboard})
         return
 
     if text == "/help" or text == "راهنما":
         await api_call("sendMessage", {
-            "chat_id": chat_id,
-            "text": get_help_text(),
-            "reply_markup": get_calendar_keyboard()
+            "chat_id": chat_id, "text": get_help_text(), "reply_markup": get_calendar_keyboard()
         })
         return
 
@@ -597,71 +748,146 @@ async def on_message(message: Message):
         return
 
     if text in ["تقویم", "تاریخ"]:
-        calendar_text = get_calendar_text()
-        await message.reply(calendar_text)
+        await message.reply(get_calendar_text())
         return
 
+
+    # ===== تنظیم اخطار =====
+    if text == "تنظیم اخطار":
+        if not await is_admin(chat_id, user_id):
+            await message.reply("⚠️ فقط ادمین‌ها می‌تونن این تنظیم رو انجام بدن.")
+            return
+        current = get_warning_limit(chat_id)
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": "⚠️ از ۳ اخطار", "callback_data": "warn_limit_3"}],
+                [{"text": "⚠️ از ۵ اخطار", "callback_data": "warn_limit_5"}],
+                [{"text": "💾 ثبت تغییرات", "callback_data": "warn_limit_save"}]
+            ]
+        }
+        await api_call("sendMessage", {
+            "chat_id": chat_id,
+            "text": f"⚙️ **تنظیمات اخطار**\n\nتعداد اخطار فعلی: **{current}**\n\nاز دکمه‌های زیر استفاده کن 👇",
+            "reply_markup": keyboard
+        })
+        return
+
+    # ===== ضد اسپم روشن =====
+    if text in ["ضد اسپم روشن", "ضد اسپم فعال"]:
+        if not await is_admin(chat_id, user_id):
+            await message.reply("⚠️ فقط ادمین‌ها می‌تونن ضد اسپم رو روشن کنن.")
+            return
+        set_antispam(chat_id, True)
+        keyboard = {"inline_keyboard": [[{"text": "🛑 خاموش کردن ضد اسپم", "callback_data": "antispam_off"}]]}
+        await api_call("sendMessage", {
+            "chat_id": chat_id,
+            "text": "🟢 **ضد اسپم روشن شد!**\n\nبرای خاموش کردن از دکمه‌ی زیر استفاده کنید 👇",
+            "reply_markup": keyboard
+        })
+        return
+
+    # ===== اخطار دادن (ادمین) =====
+    if text == "اخطار":
+        if not await is_admin(chat_id, user_id):
+            await message.reply("⚠️ فقط ادمین‌ها می‌تونن اخطار بدن.")
+            return
+        if not message.reply_to_message:
+            await message.reply("⚠️ روی پیام کاربر ریپلای کن و بنویس: اخطار")
+            return
+        target_user_id = message.reply_to_message.author.id
+        target_user_name = message.reply_to_message.author.first_name
+        await apply_warning(chat_id, target_user_id, target_user_name)
+        return
+
+    # ===== حذف اخطار =====
+    if text == "حذف اخطار":
+        if not await is_admin(chat_id, user_id):
+            await message.reply("⚠️ فقط ادمین‌ها می‌تونن اخطار رو حذف کنن.")
+            return
+        if not message.reply_to_message:
+            await message.reply("⚠️ روی پیام کاربر ریپلای کن و بنویس: حذف اخطار")
+            return
+        target_user_id = message.reply_to_message.author.id
+        target_user_name = message.reply_to_message.author.first_name
+        current = get_warning(chat_id, target_user_id)
+        if current > 0:
+            set_warning(chat_id, target_user_id, current - 1)
+            new_count = current - 1
+            await api_call("sendMessage", {
+                "chat_id": chat_id,
+                "text": f"✅ یک اخطار **{target_user_name}** حذف شد.\n📊 اخطار فعلی: **{new_count}/{get_warning_limit(chat_id)}**"
+            })
+        else:
+            await message.reply(f"⚠️ **{target_user_name}** هیچ اخطاری نداره.")
+        return
+
+    # ===== حذف همه اخطارها =====
+    if text == "حذف همه اخطارها" or text == "حذف همه اخطار":
+        if not await is_admin(chat_id, user_id):
+            await message.reply("⚠️ فقط ادمین‌ها می‌تونن اخطارها رو حذف کنن.")
+            return
+        if not message.reply_to_message:
+            await message.reply("⚠️ روی پیام کاربر ریپلای کن و بنویس: حذف همه اخطارها")
+            return
+        target_user_id = message.reply_to_message.author.id
+        target_user_name = message.reply_to_message.author.first_name
+        set_warning(chat_id, target_user_id, 0)
+        await api_call("sendMessage", {
+            "chat_id": chat_id,
+            "text": f"✅ تمام اخطارهای **{target_user_name}** حذف شدن."
+        })
+        return
+
+    # ===== تگ =====
     if text == "تگ":
         if not is_group(message.chat):
             await message.reply("⚠️ این دستور فقط توی گروه کار می‌کنه.")
             return
-
         if not await is_admin(chat_id, user_id):
-            await message.reply("⚠️ عزیزم، فقط ادمین‌ها می‌تونن از این دستور استفاده کنن. 🙏")
+            await message.reply("⚠️ فقط ادمین‌ها می‌تونن از این دستور استفاده کنن.")
             return
-
         members = get_chat_members(chat_id)
-
         if not members:
-            await message.reply("⚠️ هنوز هیچ کاربری توی گروه پیام نداده که بتونم تگش کنم.")
+            await message.reply("⚠️ هنوز کسی توی گروه پیام نداده.")
             return
-
         mentions = []
         for member_id, member_data in members.items():
             member_username = member_data.get("username")
             if member_username:
                 mentions.append(f"@{member_username}")
-
         if not mentions:
-            await message.reply("⚠️ هیچ کاربری با یوزرنیم توی گروه پیدا نشد.")
+            await message.reply("⚠️ هیچ کاربری با یوزرنیم پیدا نشد.")
             return
-
         tag_text = (
             f"📢 **توجه توجه!**\n\n"
             f"🔔 همه بیان که یه خبر مهم داریم!\n\n"
             f"{' '.join(mentions)}\n\n"
             f"💚 منتظرتونیم، بیاید گپ بزنیم! 🌹"
         )
-
-        await api_call("sendMessage", {
-            "chat_id": chat_id,
-            "text": tag_text
-        })
+        await api_call("sendMessage", {"chat_id": chat_id, "text": tag_text})
         return
 
 
+    # ===== پروفایل =====
     if text == "پروفایل" or text == "/profile":
         if message.reply_to_message:
             target = message.reply_to_message.author
         else:
             target = message.author
-
         target_id = target.id
         target_name = target.first_name
         target_username = target.username or "ندارد"
-
         user_stats = get_user_stats(chat_id, target_id)
         messages = user_stats.get("messages", 0)
         points = user_stats.get("points", 0)
         level = get_level(points)
-
         progress = points % 25
         filled = int(progress / 25 * 10)
         bar = "▓" * filled + "░" * (10 - filled)
-
         nickname = get_nickname(target_id)
         nickname_text = nickname if nickname else "ثبت نشده"
-
+        warn_count = get_warning(chat_id, target_id)
+        warn_limit = get_warning_limit(chat_id)
         reply = (
             f"═══════════════════\n"
             f"   🎴 کارت کاربری\n"
@@ -674,7 +900,8 @@ async def on_message(message: Message):
             f"───────────────────\n"
             f"💬 پیام‌ها: {messages}\n"
             f"⭐ لول: {level}\n"
-            f"✨ امتیاز: {points}\n\n"
+            f"✨ امتیاز: {points}\n"
+            f"⚠️ اخطار: {warn_count}/{warn_limit}\n\n"
             f"📈 پیشرفت تا لول بعدی:\n"
             f"{bar} {progress}/25\n\n"
             f"───────────────────\n"
@@ -684,63 +911,50 @@ async def on_message(message: Message):
         await message.reply(reply)
         return
 
+    # ===== لقب =====
     if text.startswith("لقب ") or text.startswith("لقب بذار "):
         if not await is_admin(chat_id, user_id):
-            await message.reply("⚠️ عزیزم، فقط ادمین‌های گروه می‌تونن لقب تعیین کنن. 🙏")
+            await message.reply("⚠️ فقط ادمین‌های گروه می‌تونن لقب تعیین کنن.")
             return
-
         if not message.reply_to_message:
-            await message.reply("⚠️ لطفاً روی پیام کاربر ریپلای کن و بنویس:\nلقب [متن دلخواه]\n\nمثال: لقب پادشاه")
+            await message.reply("⚠️ روی پیام کاربر ریپلای کن و بنویس:\nلقب [متن]")
             return
-
         if text.startswith("لقب بذار "):
             nickname = text[len("لقب بذار "):].strip()
         else:
             nickname = text[len("لقب "):].strip()
-
         if not nickname:
-            await message.reply("⚠️ لطفاً یه متن برای لقب بنویس.\nمثال: لقب پادشاه")
+            await message.reply("⚠️ متن لقب رو بنویس.")
             return
-
         if len(nickname) > 20:
             await message.reply("⚠️ لقب نباید بیشتر از ۲۰ کاراکتر باشه.")
             return
-
         target_user_id = message.reply_to_message.author.id
         target_user_name = message.reply_to_message.author.first_name
-
         await set_nickname(target_user_id, nickname, user_id)
-
-        reply = (
-            f"✨ **لقب جدید ثبت شد!**\n\n"
-            f"👤 کاربر: **{target_user_name}**\n"
-            f"🏷️ لقب: **{nickname}**\n\n"
-            f"برای دیدن لقب، کافیه روی پیام کاربر «پروفایل» بزنی. 💚"
+        await message.reply(
+            f"✨ لقب **{target_user_name}** ثبت شد: **{nickname}**"
         )
-        await message.reply(reply)
         return
-
 
     if text == "حذف لقب" or text == "پاک کردن لقب":
         if not await is_admin(chat_id, user_id):
-            await message.reply("⚠️ عزیزم، فقط ادمین‌های گروه می‌تونن لقب رو حذف کنن. 🙏")
+            await message.reply("⚠️ فقط ادمین‌های گروه می‌تونن لقب رو حذف کنن.")
             return
-
         if not message.reply_to_message:
             await message.reply("⚠️ روی پیام کاربر ریپلای کن و بنویس: حذف لقب")
             return
-
         target_user_id = message.reply_to_message.author.id
         target_user_name = message.reply_to_message.author.first_name
-
         removed = await remove_nickname(target_user_id)
-
         if removed:
-            await message.reply(f"🗑️ لقب **{target_user_name}** با موفقیت حذف شد.")
+            await message.reply(f"🗑️ لقب **{target_user_name}** حذف شد.")
         else:
-            await message.reply(f"⚠️ **{target_user_name}** لقبی ثبت‌شده نداره.")
+            await message.reply(f"⚠️ **{target_user_name}** لقبی نداره.")
         return
 
+
+    # ===== تایم =====
     if text in ["تایم", "ساعت"]:
         try:
             now = jdatetime.datetime.now()
@@ -755,9 +969,7 @@ async def on_message(message: Message):
             now = datetime.datetime.now()
             date_str = now.strftime("%Y/%m/%d")
             time_str = now.strftime("%H:%M:%S")
-
         random_quote = random.choice(TIME_QUOTES)
-
         reply = (
             f"⏰ ساعت دقیق به وقت ایران:\n\n"
             f"📅 {date_str}\n"
@@ -768,39 +980,35 @@ async def on_message(message: Message):
         await message.reply(reply)
         return
 
+    # ===== صدا زدن ربات =====
     if text in ["ربات", "ربات؟", "ربات!", "هی ربات"]:
-        reply = random.choice(CALL_RESPONSES)
-        await message.reply(reply)
+        await message.reply(random.choice(CALL_RESPONSES))
         return
 
+    # ===== پاسخ سلام =====
     if text in SALAM_KEYWORDS or (text.startswith("سلام") and len(text) <= 15):
-        salam_reply = random.choice(SALAM_RESPONSES).format(name=user_name)
-        await message.reply(salam_reply)
+        await message.reply(random.choice(SALAM_RESPONSES).format(name=user_name))
         return
 
+    # ===== دستورات مدیریتی =====
     admin_commands = ["بن", "کیک", "اخراج", "سیک", "آنبن", "حذف بن", "سکوت", "میوت", "حذف سکوت", "آن میوت"]
 
     if text in admin_commands:
         if not await is_admin(chat_id, user_id):
             await message.reply("⚠️ عزیزم، این دستور فقط برای ادمین‌های گروهه. 🙏")
             return
-
         if not message.reply_to_message:
             await message.reply("⚠️ روی پیام کاربر ریپلای کن و بعد دستور رو بفرست. 🙏")
             return
-
         target_user_id = message.reply_to_message.author.id
         target_user_name = message.reply_to_message.author.first_name
-
         try:
             if text in ["بن", "کیک", "اخراج", "سیک"]:
                 await client.ban_chat_member(chat_id, target_user_id)
                 await message.reply(get_warm_reply("ban", target_user_name))
-
             elif text in ["آنبن", "حذف بن"]:
                 await client.unban_chat_member(chat_id, target_user_id)
                 await message.reply(get_warm_reply("unban", target_user_name))
-
             elif text in ["سکوت", "میوت"]:
                 result = await api_call("restrictChatMember", {
                     "chat_id": chat_id,
@@ -815,8 +1023,7 @@ async def on_message(message: Message):
                 if result.get("ok"):
                     await message.reply(get_warm_reply("mute", target_user_name))
                 else:
-                    await message.reply(f"❌ خطا در سکوت: {result.get('description')}")
-
+                    await message.reply(f"❌ خطا: {result.get('description')}")
             elif text in ["حذف سکوت", "آن میوت"]:
                 result = await api_call("restrictChatMember", {
                     "chat_id": chat_id,
@@ -831,11 +1038,10 @@ async def on_message(message: Message):
                 if result.get("ok"):
                     await message.reply(get_warm_reply("unmute", target_user_name))
                 else:
-                    await message.reply(f"❌ خطا در لغو سکوت: {result.get('description')}")
-
+                    await message.reply(f"❌ خطا: {result.get('description')}")
         except Exception as e:
             print(f"Admin command error: {e}")
-            await message.reply(f"❌ متاسفانه خطایی پیش اومد: {e}")
+            await message.reply(f"❌ خطایی پیش اومد: {e}")
 
 
 if __name__ == "__main__":
