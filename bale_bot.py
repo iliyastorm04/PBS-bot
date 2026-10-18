@@ -15,6 +15,13 @@ from collections import defaultdict
 BOT_TOKEN = "545865286:AXfEStZsKuKvMUR_b7LYhjnR0G5y-oLhCJE"
 client = Bot(token=BOT_TOKEN)
 
+awaiting_sticker = set()
+game_states = {}
+game_cooldowns = {}
+from collections import defaultdict
+user_messages = defaultdict(list)
+
+
 try:
     locale.setlocale(locale.LC_ALL, 'fa_IR')
 except locale.Error:
@@ -390,6 +397,10 @@ async def on_callback(callback_query):
             await api_call("sendMessage", {"chat_id": chat_id, "text": HELP_TEXT, "reply_markup": get_help_keyboard()})
             try: await api_call("deleteMessage", {"chat_id": chat_id, "message_id": callback_query.message.message_id})
             except: pass
+        elif cb == "sticker_mode":
+            awaiting_sticker.add(user_id)
+            await api_call("sendMessage", {"chat_id": chat_id, "text": "📸 عکس مورد نظرت رو بفرست تا استیکر بشه!"})
+            return
         elif cb == "about_us":
             about_text = (
                 "🌘 **𝙻𝚒𝚍𝚘𝚌𝚊𝚒𝚗𝚎 𝚜𝚝𝚞𝚍𝚒𝚘** 🩸\n\n"
@@ -439,6 +450,50 @@ async def on_message(message: Message):
     user_id = message.author.id
     user_name = message.author.first_name or "کاربر"
     text = message.text.strip() if message.text else ""
+
+
+    if user_id in awaiting_sticker and (message.photos or message.document):
+        awaiting_sticker.remove(user_id)
+        await message.reply("⏳ چند لحظه صبر کن تا استیکرت آماده بشه...")
+        try:
+            f_id = message.photos[-1].file_id if message.photos else message.document.file_id
+            res = await api_call("getFile", {"file_id": f_id})
+            url = f"https://tapi.bale.ai/file/bot{BOT_TOKEN}/{res['result']['file_path']}"
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url) as r:
+                    img_data = await r.read()
+            
+            in_path = f"/data/data/com.termux/files/home/tmp_{user_id}.jpg"
+            with open(in_path, "wb") as f:
+                f.write(img_data)
+
+            from PIL import Image, ImageOps
+            img = Image.open(in_path)
+            # تبدیل به سایز استاندارد استیکر (512x512)
+            img = ImageOps.fit(img, (512, 512), Image.Resampling.LANCZOS)
+            out_path = f"/data/data/com.termux/files/home/stk_{user_id}.webp"
+            img.save(out_path, "WEBP")
+            
+            # ارسال به عنوان استیکر واقعی
+            sticker_url = f"https://tapi.bale.ai/bot{BOT_TOKEN}/sendSticker"
+            async with aiohttp.ClientSession() as session:
+                with open(out_path, 'rb') as sf:
+                    data = aiohttp.FormData()
+                    data.add_field('chat_id', str(chat_id))
+                    data.add_field('sticker', sf, filename='sticker.webp', content_type='image/webp')
+                    async with session.post(sticker_url, data=data) as sres:
+                        sjson = await sres.json()
+                        
+            if not sjson.get("ok"):
+                print(f"🚨 خطای API استیکر بله: {sjson}")
+                # اگر بله استیکر رو قبول نکرد، عکس رو می‌فرستیم که لااقل کاربر ناراضی نباشه
+                await send_photo(chat_id, out_path)
+
+            os.remove(in_path)
+            os.remove(out_path)
+        except Exception as e:
+            await message.reply(f"❌ خطا در ساخت استیکر: {e}")
+        return
 
     if not text: return
 
