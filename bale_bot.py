@@ -68,13 +68,15 @@ def is_group(chat):
     try: return chat.type in ['group', 'supergroup'] or (hasattr(chat, 'title') and chat.title)
     except: return False
 
-async def send_photo(chat_id, photo_path):
+async def send_photo(chat_id, photo_path, caption=None):
     url = f"https://tapi.bale.ai/bot{BOT_TOKEN}/sendPhoto"
     async with aiohttp.ClientSession() as session:
         with open(photo_path, 'rb') as f:
             data = aiohttp.FormData()
             data.add_field('chat_id', str(chat_id))
             data.add_field('photo', f, filename='img.png', content_type='image/png')
+            if caption:
+                data.add_field('caption', caption)
             async with session.post(url, data=data) as resp:
                 return await resp.json()
 
@@ -110,19 +112,45 @@ def get_persian_time():
 
 def create_stats_image(chat_id):
     try:
+        from PIL import Image, ImageDraw, ImageFont, ImageFilter
+        import jdatetime
+        import random
+
         data = load_json(STATS_FILE)
         chat_key = str(chat_id)
         members_data = data.get(chat_key, {})
         total_messages = sum(m.get("messages", 0) for m in members_data.values())
         total_members = len(members_data)
+        
+        jl = load_json("join_leave.json").get(chat_key, {"joined": 0, "left": 0})
+        joined = jl.get("joined", 0)
+        left = jl.get("left", 0)
+        hs = load_json("hourly.json").get(chat_key, {str(i):0 for i in range(24)})
+        ms = load_json("media.json").get(chat_key, {"photo":0, "video":0, "gif":0, "voice":0, "music":0, "file":0, "sticker":0})
+        
         top_users = sorted(members_data.items(), key=lambda x: x[1].get("messages", 0), reverse=True)[:5]
         
         now = jdatetime.datetime.now()
         months = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
         date_str = f"تاریخ {now.day} {months[now.month-1]} {now.year}"
         
-        W, H = 1200, 800
+        palettes = [
+            {"P": (0, 255, 220), "G1": (50, 0, 100), "G2": (0, 80, 100), "C": [(255, 165, 0), (150, 100, 255), (0, 255, 150), (0, 200, 255), (255, 100, 150)]},
+            {"P": (255, 80, 80), "G1": (100, 0, 0), "G2": (100, 30, 0), "C": [(255, 80, 80), (255, 140, 0), (255, 215, 0), (255, 99, 71), (218, 112, 214)]},
+            {"P": (0, 200, 255), "G1": (0, 20, 100), "G2": (0, 80, 120), "C": [(0, 150, 255), (0, 200, 255), (72, 209, 204), (0, 255, 150), (100, 149, 237)]}
+        ]
+        theme = random.choice(palettes)
+        
+        W, H = 1200, 950
         img = Image.new('RGB', (W, H), (12, 14, 25))
+        draw = ImageDraw.Draw(img)
+
+        glow = Image.new('RGB', (W, H), (0,0,0))
+        gd = ImageDraw.Draw(glow)
+        gd.ellipse([(W-500, -200), (W+200, 400)], fill=theme["G1"])
+        gd.ellipse([(-300, H-500), (400, H+200)], fill=theme["G2"])
+        glow = glow.filter(ImageFilter.GaussianBlur(250))
+        img = Image.blend(img, glow, 0.4)
         draw = ImageDraw.Draw(img)
 
         f_path = "/data/data/com.termux/files/home/Vazirmatn-Bold.ttf"
@@ -132,8 +160,9 @@ def create_stats_image(chat_id):
             f_big = ImageFont.truetype(f_path, 22)
             f_med = ImageFont.truetype(f_path, 18)
             f_small = ImageFont.truetype(f_path, 14)
+            f_tiny = ImageFont.truetype(f_path, 12)
         except:
-            f_title = f_huge = f_big = f_med = f_small = ImageFont.load_default()
+            f_title = f_huge = f_big = f_med = f_small = f_tiny = ImageFont.load_default()
 
         def t(text): return format_persian(str(text))
         def draw_rtl(y, text, font, color=(255,255,255), x_offset=40):
@@ -141,21 +170,132 @@ def create_stats_image(chat_id):
             bbox = draw.textbbox((0,0), txt, font=font)
             w = bbox[2] - bbox[0]
             draw.text((W - x_offset - w, y), txt, font=font, fill=color)
+        def draw_ltr(x, y, text, font, color=(255,255,255)):
+            draw.text((x, y), str(text), font=font, fill=color)
 
-        draw_rtl(40, "داشبورد تحلیلی گروه", f_title, (0, 255, 220))
-        draw_rtl(90, f"تعداد کل پیام‌ها: {total_messages} | اعضای فعال: {total_members}", f_big, (255, 255, 255))
-        draw_rtl(140, "کاربران برتر:", f_big, (255, 200, 0))
+        draw_rtl(30, "داشبورد تحلیلی", f_title, theme["P"])
+        draw_rtl(75, "گزارش جامع پویای ۲۴ ساعته", f_small, (150, 160, 180))
+        draw_ltr(40, 75, date_str, f_small, (150, 160, 180))
+
+        box_y, box_h, box_w, gap = 110, 80, 210, 15
+        labels = ["تعداد پیام‌ها", "کاربران فعال", "کاربران جدید", "کاربران خارج شده", "کل اعضا"]
+        vals = [f"{total_messages:,}", f"{len(members_data)}", f"{joined}", f"{left}", f"{total_members}"]
+        icons = ["💬", "👤", "➕", "➖", "👥"]
         
-        y = 190
-        for i, (uid, udata) in enumerate(top_users):
-            name = udata.get("first_name", "کاربر")
-            msgs = udata.get("messages", 0)
-            draw_rtl(y, f"{i+1}. {name} - {msgs} پیام", f_med, (200, 200, 200))
-            y += 45
+        start_x = W - 40 - (5 * box_w + 4 * gap)
+        for i in range(5):
+            x1 = start_x + i * (box_w + gap)
+            x2 = x1 + box_w
+            draw.rounded_rectangle([(x1, box_y), (x2, box_y+box_h)], radius=10, fill=(15, 20, 35), outline=theme["C"][i], width=2)
+            draw_ltr(x1+15, box_y+10, icons[i], f_big, theme["C"][i])
+            draw_rtl(box_y+10, vals[i], f_big, (255,255,255), x_offset=W-x2+15)
+            draw_rtl(box_y+45, labels[i], f_tiny, (180, 190, 210), x_offset=W-x2+15)
 
-        out_path = f"/data/data/com.termux/files/home/stats_{chat_id}.png"
-        img.save(out_path)
-        return out_path
+        chart_y, chart_h = 210, 220
+        draw.rounded_rectangle([(40, chart_y), (W-40, chart_y+chart_h)], radius=12, fill=(10, 15, 25), outline=(30, 40, 60), width=1)
+        draw_rtl(chart_y+10, "نمودار تعداد پیام‌ها در طول شبانه‌روز", f_med, (200,200,220))
+        
+        max_h = max([hs.get(str(i), 0) for i in range(24)]) or 1
+        c_x1, c_y1 = 80, chart_y + 50
+        c_w, c_h = W - 160, chart_h - 90
+        
+        for i in range(5):
+            gy = c_y1 + c_h - (i * c_h / 4)
+            draw.line([(c_x1, gy), (c_x1+c_w, gy)], fill=(25, 30, 45), width=1)
+            draw_ltr(c_x1-35, gy-8, str(int(max_h * i / 4)), f_tiny, (100,100,120))
+
+        points = []
+        for i in range(24):
+            val = hs.get(str(i), 0)
+            px = c_x1 + (i * c_w / 23)
+            py = c_y1 + c_h - (val * c_h / max_h)
+            points.append((px, py))
+            if i % 2 == 0: draw_ltr(px-8, c_y1+c_h+5, str(i), f_tiny, (100,100,120))
+
+        if points:
+            poly = [(c_x1, c_y1+c_h)] + points + [(c_x1+c_w, c_y1+c_h)]
+            overlay = Image.new('RGBA', (W, H), (0,0,0,0))
+            od = ImageDraw.Draw(overlay)
+            od.polygon(poly, fill=theme["P"] + (40,))
+            img.paste(overlay, (0,0), overlay)
+            draw = ImageDraw.Draw(img)
+            draw.line(points, fill=theme["P"], width=3, joint="curve")
+            for p in points: draw.ellipse([(p[0]-3, p[1]-3), (p[0]+3, p[1]+3)], fill=theme["P"])
+
+        media_y = 445
+        draw.rounded_rectangle([(40, media_y), (W-40, media_y+130)], radius=12, fill=(10, 15, 25), outline=(30, 40, 60), width=1)
+        draw_rtl(media_y+10, "تفکیک رسانه‌ها", f_med, (200,200,220))
+        
+        media_items = [
+            ("photo", "عکس‌ها", "🖼️", (0, 255, 150)), ("video", "ویدیوها", "📹", (150, 100, 255)),
+            ("gif", "گیف‌ها", "🎞️", (255, 200, 0)), ("voice", "ویس‌ها", "🎤", (255, 100, 150)),
+            ("music", "موزیک‌ها", "🎵", (0, 200, 255)), ("file", "فایل‌ها", "📁", (255, 165, 0)),
+            ("sticker", "استیکرها", "😀", (200, 200, 200))
+        ]
+        
+        item_w, gap = 250, 20
+        for i, (key, label, icon, col) in enumerate(media_items[:4]):
+            ix = W - 50 - (i+1)*(item_w + gap) + gap
+            iy = media_y + 35
+            draw.rounded_rectangle([(ix, iy), (ix+item_w, iy+35)], radius=6, fill=(15,20,35), outline=col, width=1)
+            draw_ltr(ix+10, iy+8, icon, f_small, col)
+            draw_rtl(iy+8, str(ms.get(key,0)), f_small, (255,255,255), x_offset=W-ix-item_w+10)
+            draw_rtl(iy+22, label, f_tiny, (150,160,180), x_offset=W-ix-item_w+10)
+
+        offset = (item_w + gap) // 2
+        for i, (key, label, icon, col) in enumerate(media_items[4:]):
+            ix = W - 50 - (i+1)*(item_w + gap) - offset + gap
+            iy = media_y + 80
+            draw.rounded_rectangle([(ix, iy), (ix+item_w, iy+35)], radius=6, fill=(15,20,35), outline=col, width=1)
+            draw_ltr(ix+10, iy+8, icon, f_small, col)
+            draw_rtl(iy+8, str(ms.get(key,0)), f_small, (255,255,255), x_offset=W-ix-item_w+10)
+            draw_rtl(iy+22, label, f_tiny, (150,160,180), x_offset=W-ix-item_w+10)
+
+        user_y = 600
+        draw_rtl(user_y, "کاربران برتر در ۲۴ ساعت گذشته", f_big, theme["P"])
+        user_y += 40
+        
+        card_w, card_h, gap = 210, 250, 15
+        max_msgs = max([u[1].get("messages",0) for u in top_users]) if top_users else 1
+        
+        for i, (uid, udata) in enumerate(top_users):
+            if i >= 5: break
+            name = udata.get("first_name", "کاربر")
+            uname = udata.get("username")
+            msgs = udata.get("messages", 0)
+            
+            cx = W - 40 - (i+1)*card_w - i*gap
+            draw.rounded_rectangle([(cx, user_y), (cx+card_w, user_y+card_h)], radius=12, fill=(12, 18, 30), outline=theme["C"][i], width=2)
+            
+            av_x = cx + card_w // 2
+            draw.ellipse([(av_x-35, user_y+20), (av_x+35, user_y+90)], fill=(20,30,50), outline=theme["C"][i], width=3)
+            init = name[0].upper() if name else "?"
+            bbox = draw.textbbox((0,0), init, font=f_huge)
+            draw.text((av_x - (bbox[2]-bbox[0])/2, user_y+35), init, font=f_huge, fill=(255,255,255))
+            
+            display_name = uname if uname else name
+            bbox = draw.textbbox((0,0), t(display_name), font=f_med)
+            draw.text((av_x - (bbox[2]-bbox[0])/2, user_y+105), t(display_name), font=f_med, fill=(255,255,255))
+            
+            stats_text = f"تعداد پیام‌ها: {msgs}"
+            bbox = draw.textbbox((0,0), t(stats_text), font=f_small)
+            draw.text((av_x - (bbox[2]-bbox[0])/2, user_y+145), t(stats_text), font=f_small, fill=(180,190,210))
+            
+            pct = int((msgs / total_messages)*100) if total_messages > 0 else 0
+            pct_text = f"فعالیت: {pct}%"
+            bbox = draw.textbbox((0,0), t(pct_text), font=f_tiny)
+            draw.text((av_x - (bbox[2]-bbox[0])/2, user_y+170), t(pct_text), font=f_tiny, fill=theme["C"][i])
+            
+            bar_w = card_w - 40
+            bar_x = cx + 20
+            bar_y = user_y + card_h - 30
+            draw.rounded_rectangle([(bar_x, bar_y), (bar_x+bar_w, bar_y+8)], radius=4, fill=(25,35,55))
+            fill_w = int((msgs / max_msgs) * bar_w) if max_msgs > 0 else 1
+            if fill_w > 0: draw.rounded_rectangle([(bar_x, bar_y), (bar_x+fill_w, bar_y+8)], radius=4, fill=theme["C"][i])
+
+        output_path = f"/data/data/com.termux/files/home/stats_{chat_id}.png"
+        img.save(output_path)
+        return output_path
     except Exception as e:
         print(f"Stats error: {e}")
         return None
@@ -531,8 +671,12 @@ async def on_message(message: Message):
         return
 
     if text == "آمار":
+        chat_title = getattr(message.chat, 'title', 'گروه')
         img = create_stats_image(chat_id)
-        if img: await send_photo(chat_id, img)
+        if img: 
+            await send_photo(chat_id, img, caption=f"📊 آمار گروه: **{chat_title}**")
+        else:
+            await message.reply("❌ خطا در ساخت تصویر آمار.")
         return
 
     if text in ["قیمت", "قیمت دلار"]:
@@ -758,8 +902,12 @@ async def on_message(message: Message):
         return
 
     if text == "آمار":
+        chat_title = getattr(message.chat, 'title', 'گروه')
         img = create_stats_image(chat_id)
-        if img: await send_photo(chat_id, img)
+        if img: 
+            await send_photo(chat_id, img, caption=f"📊 آمار گروه: **{chat_title}**")
+        else:
+            await message.reply("❌ خطا در ساخت تصویر آمار.")
         return
 
     if text in ["قیمت", "قیمت دلار"]:
