@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>کتابخانه پرامپت | Storm</title>
+    <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+    <style>
+        :root {
+            --bg: #050508;
+            --card-bg: rgba(15, 15, 25, 0.7);
+            --text: #e0e0e0;
+            --accent: #a855f7;
+            --border: rgba(168, 85, 247, 0.2);
+            --term-green: #00ffcc;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Vazirmatn', sans-serif; }
+        
+        #bg-canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; background: radial-gradient(circle at center, #0f0a1a 0%, #050508 100%); }
+        body { color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; overflow-x: hidden; }
+
+        /* --- Landing Page --- */
+        #landing-page {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,5,8,0.95);
+            z-index: 1000; display: flex; flex-direction: column; justify-content: center; align-items: center;
+            text-align: center; padding: 20px; transition: opacity 0.5s ease;
+        }
+        #landing-page h1 { font-size: 3rem; color: #fff; text-shadow: 0 0 30px var(--accent); margin-bottom: 20px; }
+        #landing-page p { font-size: 1.2rem; color: #aaa; max-width: 600px; line-height: 1.8; margin-bottom: 40px; }
+        .enter-btn {
+            background: transparent; color: var(--accent); border: 2px solid var(--accent);
+            padding: 15px 50px; font-size: 1.2rem; font-weight: bold; border-radius: 50px; cursor: pointer;
+            transition: all 0.3s; text-shadow: 0 0 10px rgba(168, 85, 247, 0.5); box-shadow: 0 0 15px rgba(168, 85, 247, 0.2);
+        }
+        .enter-btn:hover { background: var(--accent); color: #fff; box-shadow: 0 0 30px var(--accent); transform: scale(1.05); }
+
+        /* --- Auth Modal --- */
+        #auth-modal {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8);
+            z-index: 1001; display: none; justify-content: center; align-items: center; backdrop-filter: blur(5px);
+        }
+        .auth-box {
+            background: #0f0f15; border: 1px solid var(--border); padding: 40px; border-radius: 15px;
+            width: 90%; max-width: 400px; text-align: center; box-shadow: 0 0 30px rgba(168, 85, 247, 0.2);
+        }
+        .auth-box h2 { margin-bottom: 20px; color: #fff; }
+        .auth-box input {
+            width: 100%; padding: 12px; margin-bottom: 15px; background: rgba(255,255,255,0.05);
+            border: 1px solid #333; border-radius: 8px; color: white; outline: none; font-family: inherit;
+        }
+        .auth-box input:focus { border-color: var(--accent); }
+        .auth-box button {
+            width: 100%; padding: 12px; background: var(--accent); color: #fff; border: none;
+            border-radius: 8px; font-weight: bold; cursor: pointer; font-family: inherit; font-size: 1rem;
+        }
+
+        /* --- Main App --- */
+        #main-app { display: none; width: 100%; flex-direction: column; align-items: center; padding: 40px 20px; }
+        
+        .music-btn {
+            position: fixed; top: 20px; left: 20px; background: rgba(15, 15, 25, 0.8);
+            border: 1px solid var(--border); color: #fff; width: 45px; height: 45px;
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; z-index: 100; backdrop-filter: blur(10px); font-size: 1.2rem;
+        }
+        .music-btn.playing { animation: pulse 2s infinite; border-color: var(--term-green); color: var(--term-green); }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 255, 204, 0.4); } 70% { box-shadow: 0 0 0 15px rgba(0, 255, 204, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 255, 204, 0); } }
+
+        h1.main-title { font-size: 2.5rem; margin-bottom: 10px; color: #fff; text-shadow: 0 0 20px rgba(168, 85, 247, 0.6); }
+        p.subtitle { color: #888; margin-bottom: 30px; font-size: 1.1rem; }
+
+        .search-container { width: 100%; max-width: 600px; margin-bottom: 30px; }
+        .search-container input { width: 100%; padding: 15px 25px; background: rgba(0,0,0,0.6); border: 1px solid var(--border); border-radius: 50px; color: white; font-size: 1rem; outline: none; backdrop-filter: blur(5px); }
+        .search-container input:focus { border-color: var(--accent); box-shadow: 0 0 20px rgba(168, 85, 247, 0.3); }
+
+        .filters { display: flex; gap: 10px; margin-bottom: 30px; flex-wrap: wrap; justify-content: center; }
+        .filter-btn { background: rgba(0,0,0,0.5); border: 1px solid var(--border); color: #aaa; padding: 8px 20px; border-radius: 20px; cursor: pointer; font-family: inherit; backdrop-filter: blur(5px); }
+        .filter-btn:hover, .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); box-shadow: 0 0 15px rgba(168, 85, 247, 0.4); }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; width: 100%; max-width: 1000px; margin-bottom: 50px; }
+        .card { background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; transition: transform 0.3s; }
+        .card:hover { transform: translateY(-5px); box-shadow: 0 10px 30px rgba(0,0,0,0.8); border-color: var(--accent); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .card-title { font-size: 1.1rem; font-weight: bold; color: #fff; }
+        .card-tag { font-size: 0.75rem; padding: 4px 10px; border-radius: 12px; font-weight: bold; }
+        .tag-chatgpt { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+        .tag-midjourney { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+        .tag-ideogram { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+        .prompt-text { background: rgba(0,0,0,0.5); padding: 15px; border-radius: 8px; font-size: 0.9rem; line-height: 1.6; color: #ccc; margin-bottom: 15px; flex-grow: 1; word-wrap: break-word; white-space: pre-wrap; direction: ltr; text-align: left; }
+        .copy-btn { background: rgba(168, 85, 247, 0.1); color: var(--accent); border: 1px solid var(--accent); padding: 10px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.2s; width: 100%; font-family: inherit; }
+        .copy-btn:hover { background: var(--accent); color: #fff; }
+
+        /* Terminal */
+        .terminal { width: 100%; max-width: 1000px; background: rgba(10, 10, 15, 0.85); backdrop-filter: blur(15px); border: 1px solid #333; border-radius: 12px; overflow: hidden; direction: ltr; font-family: monospace; margin-bottom: 30px; }
+        .term-header { background: rgba(25, 25, 35, 0.9); padding: 10px 15px; display: flex; align-items: center; border-bottom: 1px solid #333; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+        .dot.red { background: #ff5f56; } .dot.yellow { background: #ffbd2e; } .dot.green { background: #27c93f; }
+        .term-title { color: #666; font-size: 0.8rem; margin-left: auto; }
+        .term-body { padding: 15px; height: 180px; overflow-y: auto; font-size: 0.95rem; color: var(--term-green); line-height: 1.5; }
+        .term-body .error { color: #ff5f56; } .term-body .info { color: #3b82f6; }
+        .term-input-line { display: flex; padding: 10px 15px; background: rgba(5, 5, 10, 0.9); border-top: 1px solid #222; align-items: center; }
+        .prompt-sign { color: var(--accent); margin-right: 10px; font-weight: bold; }
+        .term-input { background: transparent; border: none; color: var(--term-green); font-family: monospace; font-size: 0.95rem; flex-grow: 1; outline: none; }
+
+        /* Stats Footer */
+        footer { margin-top: 20px; color: #888; font-size: 1rem; text-align: center; line-height: 1.8; width: 100%; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px; }
+        .stats-box { display: flex; justify-content: center; gap: 30px; margin-bottom: 15px; font-weight: bold; }
+        .stat-item { color: var(--accent); font-size: 1.2rem; text-shadow: 0 0 10px rgba(168,85,247,0.3); }
+        .brand { color: var(--accent); font-size: 1.5rem; font-weight: bold; text-shadow: 0 0 15px var(--accent); letter-spacing: 3px; }
+
+        #toast { visibility: hidden; min-width: 250px; background-color: #10b981; color: #fff; text-align: center; border-radius: 8px; padding: 16px; position: fixed; z-index: 2000; left: 50%; bottom: 30px; transform: translateX(-50%); font-weight: bold; opacity: 0; transition: opacity 0.3s, bottom 0.3s; }
+        #toast.show { visibility: visible; opacity: 1; bottom: 50px; }
+    </style>
+</head>
+<body>
+    <canvas id="bg-canvas"></canvas>
+    
+    <audio id="bgMusic" loop>
+        <source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" type="audio/mpeg">
+    </audio>
+
+    <!-- Landing Page -->
+    <div id="landing-page">
+        <h1>کتابخانه پرامپت</h1>
+        <p>به بزرگترین مرجع پرامپت‌های هوش مصنوعی خوش آمدید. در اینجا می‌توانید بهترین پرامپت‌ها را برای ChatGPT، Midjourney و Ideogram پیدا کنید و در کارهای خود استفاده کنید.</p>
+        <button class="enter-btn" onclick="openAuth()">ورود به سایت</button>
+    </div>
+
+    <!-- Auth Modal -->
+    <div id="auth-modal">
+        <div class="auth-box">
+            <h2>ثبت نام / ورود</h2>
+            <input type="text" id="authName" placeholder="نام کاربری شما (مثلاً: Storm)" required>
+            <input type="email" id="authEmail" placeholder="ایمیل شما" required>
+            <button onclick="loginUser()">ورود به سایت</button>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="main-app">
+        <button class="music-btn" id="musicBtn" onclick="toggleMusic()">🎵</button>
+        <h1 class="main-title">کتابخانه پرامپت</h1>
+        <p class="subtitle" id="welcomeMsg">مجموعه‌ای از بهترین پرامپت‌ها</p>
+
+        <div class="search-container">
+            <input type="text" id="searchInput" placeholder="جستجوی پرامپت..." onkeyup="filterPrompts()">
+        </div>
+
+        <div class="filters">
+            <button class="filter-btn active" onclick="setFilter('all', this)">همه</button>
+            <button class="filter-btn" onclick="setFilter('chatgpt', this)">ChatGPT</button>
+            <button class="filter-btn" onclick="setFilter('midjourney', this)">Midjourney</button>
+            <button class="filter-btn" onclick="setFilter('ideogram', this)">Ideogram</button>
+        </div>
+
+        <div class="grid" id="promptGrid"></div>
+
+        <div class="terminal">
+            <div class="term-header">
+                <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+                <span class="term-title">storm@terminal:~</span>
+            </div>
+            <div class="term-body" id="termBody">
+                <div>Welcome to Storm Terminal v1.0</div>
+                <div>Type <span class="info">'help'</span> to see available commands.</div><br>
+            </div>
+            <div class="term-input-line">
+                <span class="prompt-sign">storm@terminal:~$</span>
+                <input type="text" id="termInput" class="term-input" autocomplete="off" autofocus>
+            </div>
+        </div>
+
+        <footer>
+            <div class="stats-box">
+                <div class="stat-item">👁️ بازدید کل: <span id="totalVisits">0</span></div>
+                <div class="stat-item">🟢 آنلاین: <span id="onlineUsers">0</span></div>
+            </div>
+            <div>ساخته شده با ❤️</div>
+            <div class="brand">storm</div>
+        </footer>
+    </div>
+
+    <div id="toast">✅ پرامپت با موفقیت کپی شد!</div>
+
+    <script>
+        // ==========================================
+        // دیتابیس پرامپت‌ها
+        // ==========================================
+        const prompts = [
+            { id: 1, title: "ساخت عکس سایبرپانک", category: "midjourney", text: "A futuristic cyberpunk city at night, neon lights, flying cars, rain, cinematic lighting, 8k resolution, hyper-realistic --ar 16:9" },
+            { id: 2, title: "نوشتن کد پایتون با هوش مصنوعی", category: "chatgpt", text: "You are an expert Python developer. Write a Python script that connects to the Bale API using aiohttp, listens for new messages, and automatically replies to any message containing 'hello' with 'Welcome!'. Include error handling." },
+            { id: 3, title: "طراحی لوگو با متن", category: "ideogram", text: "A modern minimalist logo for a tech company named 'Lidocaine Studio'. Dark background, neon cyan and purple accents, text 'Lidocaine Studio' in a clean futuristic font." },
+            { id: 4, title: "داستان کوتاه تخیلی", category: "chatgpt", text: "Write a short sci-fi story about a hacker who discovers that the entire universe is a simulation running on a forgotten server in the basement of a library. Make it dark and philosophical." },
+            { id: 5, title: "پرتره واقع‌گرایانه از یک ربات", category: "midjourney", text: "Close-up portrait of a highly detailed android robot, sad expression, cinematic lighting, studio quality, blurred background, 85mm lens --ar 3:4" },
+            { id: 6, title: "آموزش لینوکس به سبک هکرها", category: "chatgpt", text: "Act as a black hat hacker from the 90s. Explain how to use the 'grep' command in Linux, but keep it mysterious and use hacker slang." },
+            { id: 7, title: "عکاسی ماکرو از طبیعت", category: "midjourney", text: "Macro photography of a glowing blue mushroom in a dark enchanted forest, tiny fairy lights, dew drops, extreme close-up, cinematic lighting, 8k --ar 16:9" },
+            { id: 8, title: "بنر تبلیغاتی مینیمال", category: "ideogram", text: "A minimal promotional banner for a web hosting company. Text 'Fast & Secure'. Clean white background, blue geometric shapes, professional, vector style." },
+            { id: 9, title: "رفع باگ کد", category: "chatgpt", text: "I have a Python script that throws a 'KeyError: NoneType'. What are the most common reasons for this error and how can I fix it? Please provide code examples." },
+            { id: 10, title: "طرح لباس فوتوریستیک", category: "midjourney", text: "A futuristic streetwear outfit design, oversized jacket with glowing neon straps, techwear fashion, full body shot, male model, dark studio background, 8k --ar 9:16" }
+        ];
+
+        // ==========================================
+        // سیستم ورود و ثبت نام
+        // ==========================================
+        let loggedInUser = null;
+
+        function checkUser() {
+            const savedUser = sessionStorage.getItem('storm_user');
+            if (savedUser) {
+                loggedInUser = JSON.parse(savedUser);
+                document.getElementById('landing-page').style.display = 'none';
+                document.getElementById('main-app').style.display = 'flex';
+                document.getElementById('welcomeMsg').innerText = `خوش آمدی ${loggedInUser.name} عزیز!`;
+            }
+        }
+
+        function openAuth() {
+            document.getElementById('auth-modal').style.display = 'flex';
+        }
+
+        function loginUser() {
+            const name = document.getElementById('authName').value.trim();
+            const email = document.getElementById('authEmail').value.trim();
+            if (!name || !email) { alert('لطفا نام و ایمیل را وارد کنید.'); return; }
+
+            const user = { name: name, email: email };
+            sessionStorage.setItem('storm_user', JSON.stringify(user));
+            
+            const music = document.getElementById('bgMusic');
+            music.play().catch(e => console.log("Auto-play blocked"));
+            document.getElementById('musicBtn').classList.add('playing');
+            document.getElementById('musicBtn').innerHTML = '⏸️';
+            isPlaying = true;
+
+            document.getElementById('auth-modal').style.display = 'none';
+            document.getElementById('landing-page').style.opacity = '0';
+            setTimeout(() => {
+                document.getElementById('landing-page').style.display = 'none';
+                document.getElementById('main-app').style.display = 'flex';
+                document.getElementById('welcomeMsg').innerText = `خوش آمدی ${name} عزیز!`;
+            }, 500);
+        }
+
+        // ==========================================
+        // آمار و بازدید
+        // ==========================================
+        function updateStats() {
+            let visits = parseInt(localStorage.getItem('storm_visits') || '1420');
+            visits += 1;
+            localStorage.setItem('storm_visits', visits);
+            document.getElementById('totalVisits').innerText = visits.toLocaleString('fa-IR');
+            
+            setInterval(() => {
+                const online = Math.floor(Math.random() * 25) + 5;
+                document.getElementById('onlineUsers').innerText = online.toLocaleString('fa-IR');
+            }, 3000);
+        }
+
+        // ==========================================
+        // موسیقی
+        // ==========================================
+        const music = document.getElementById('bgMusic');
+        const musicBtn = document.getElementById('musicBtn');
+        let isPlaying = false;
+
+        function toggleMusic() {
+            if (isPlaying) {
+                music.pause(); musicBtn.innerHTML = '🎵'; musicBtn.classList.remove('playing');
+            } else {
+                music.play().then(() => { musicBtn.innerHTML = '⏸️'; musicBtn.classList.add('playing'); });
+            }
+            isPlaying = !isPlaying;
+        }
+
+        // ==========================================
+        // رندر پرامپت‌ها
+        // ==========================================
+        let currentFilter = 'all'; let currentSearch = '';
+
+        function renderPrompts() {
+            const grid = document.getElementById('promptGrid'); grid.innerHTML = '';
+            const filtered = prompts.filter(p => {
+                const matchFilter = currentFilter === 'all' || p.category === currentFilter;
+                const matchSearch = p.title.includes(currentSearch) || p.text.toLowerCase().includes(currentSearch.toLowerCase());
+                return matchFilter && matchSearch;
+            });
+
+            if (filtered.length === 0) { grid.innerHTML = '<p style="text-align:center; color:#888; grid-column: 1/-1;">هیچ پرامپتی پیدا نشد.</p>'; return; }
+
+            filtered.forEach(p => {
+                const card = document.createElement('div'); card.className = 'card';
+                let tagClass = '', tagName = '';
+                if (p.category === 'chatgpt') { tagClass = 'tag-chatgpt'; tagName = 'ChatGPT'; }
+                else if (p.category === 'midjourney') { tagClass = 'tag-midjourney'; tagName = 'Midjourney'; }
+                else if (p.category === 'ideogram') { tagClass = 'tag-ideogram'; tagName = 'Ideogram'; }
+                
+                const encodedText = encodeURIComponent(p.text);
+                card.innerHTML = `
+                    <div class="card-header"><span class="card-title">${p.title}</span><span class="card-tag ${tagClass}">${tagName}</span></div>
+                    <div class="prompt-text">${p.text}</div>
+                    <button class="copy-btn" onclick="copyText(decodeURIComponent('${encodedText}'))">📋 کپی پرامپت</button>`;
+                grid.appendChild(card);
+            });
+        }
+
+        function setFilter(category, btn) {
+            currentFilter = category;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active'); renderPrompts();
+        }
+        function filterPrompts() { currentSearch = document.getElementById('searchInput').value; renderPrompts(); }
+
+        function copyText(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                const toast = document.getElementById("toast");
+                toast.className = "show";
+                setTimeout(() => { toast.className = toast.className.replace("show", ""); }, 2500);
+            });
+        }
+
+        // ==========================================
+        // ترمینال
+        // ==========================================
+        const termBody = document.getElementById('termBody');
+        const termInput = document.getElementById('termInput');
+
+        termInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                const cmd = termInput.value.trim(); if (cmd === '') return;
+                termBody.innerHTML += `<div><span style="color:#a855f7;">storm@terminal:~$</span> ${cmd}</div>`;
+                const lowerCmd = cmd.toLowerCase(); let response = '';
+                if (lowerCmd === 'help') { response = `<div class="info">Commands:</div><div>help, clear, date, whoami, about</div>`; }
+                else if (lowerCmd === 'clear') { termBody.innerHTML = ''; termInput.value = ''; return; }
+                else if (lowerCmd === 'date') { response = `<div>${new Date().toString()}</div>`; }
+                else if (lowerCmd === 'whoami') { response = `<div>${loggedInUser ? loggedInUser.name : 'guest'}</div>`; }
+                else if (lowerCmd === 'about') { response = `<div>Prompt Library v1.0 - Created by Storm</div>`; }
+                else { response = `<div class="error">Command not found: ${cmd}</div>`; }
+                termBody.innerHTML += response; termInput.value = ''; termBody.scrollTop = termBody.scrollHeight;
+            }
+        });
+
+        // ==========================================
+        // پس‌زمینه (Canvas)
+        // ==========================================
+        const canvas = document.getElementById('bg-canvas'); const ctx = canvas.getContext('2d');
+        let width, height; let particles = [];
+        function resize() { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; }
+        window.addEventListener('resize', resize); resize();
+
+        class Particle {
+            constructor() { this.x = Math.random() * width; this.y = Math.random() * height; this.vx = (Math.random() - 0.5) * 0.5; this.vy = (Math.random() - 0.5) * 0.5; this.radius = Math.random() * 2 + 1; }
+            update() { this.x += this.vx; this.y += this.vy; if (this.x < 0 || this.x > width) this.vx *= -1; if (this.y < 0 || this.y > height) this.vy *= -1; }
+            draw() { ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.fillStyle = 'rgba(168, 85, 247, 0.5)'; ctx.fill(); }
+        }
+        for (let i = 0; i < 100; i++) particles.push(new Particle());
+
+        function animate() {
+            ctx.clearRect(0, 0, width, height);
+            for (let i = 0; i < particles.length; i++) {
+                particles[i].update(); particles[i].draw();
+                for (let j = i + 1; j < particles.length; j++) {
+                    const dx = particles[i].x - particles[j].x; const dy = particles[i].y - particles[j].y; const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 120) { ctx.beginPath(); ctx.moveTo(particles[i].x, particles[i].y); ctx.lineTo(particles[j].x, particles[j].y); ctx.strokeStyle = `rgba(168, 85, 247, ${1 - dist / 120})`; ctx.lineWidth = 0.5; ctx.stroke(); }
+                }
+            }
+            requestAnimationFrame(animate);
+        }
+
+        // اجرای اولیه
+        checkUser();
+        renderPrompts();
+        updateStats();
+        animate();
+    </script>
+</body>
+</html>
