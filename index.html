@@ -205,17 +205,20 @@
         let loggedInUser = null;
 
         function checkUser() {
-            const savedUser = sessionStorage.getItem('storm_user');
+            const savedUser = localStorage.getItem('storm_user');
             if (savedUser) {
                 loggedInUser = JSON.parse(savedUser);
-                document.getElementById('landing-page').style.display = 'none';
-                document.getElementById('main-app').style.display = 'flex';
-                document.getElementById('welcomeMsg').innerText = `خوش آمدی ${loggedInUser.name} عزیز!`;
+                const btn = document.querySelector('.enter-btn');
+                if (btn) btn.innerText = `ادامه به عنوان ${loggedInUser.name}`;
             }
         }
 
         function openAuth() {
-            document.getElementById('auth-modal').style.display = 'flex';
+            if (loggedInUser) {
+                enterSite();
+            } else {
+                document.getElementById('auth-modal').style.display = 'flex';
+            }
         }
 
         function loginUser() {
@@ -223,21 +226,25 @@
             const email = document.getElementById('authEmail').value.trim();
             if (!name || !email) { alert('لطفا نام و ایمیل را وارد کنید.'); return; }
 
-            const user = { name: name, email: email };
-            sessionStorage.setItem('storm_user', JSON.stringify(user));
+            loggedInUser = { name: name, email: email };
+            localStorage.setItem('storm_user', JSON.stringify(loggedInUser));
             
+            document.getElementById('auth-modal').style.display = 'none';
+            enterSite();
+        }
+
+        function enterSite() {
             const music = document.getElementById('bgMusic');
             music.play().catch(e => console.log("Auto-play blocked"));
             document.getElementById('musicBtn').classList.add('playing');
             document.getElementById('musicBtn').innerHTML = '⏸️';
             isPlaying = true;
 
-            document.getElementById('auth-modal').style.display = 'none';
             document.getElementById('landing-page').style.opacity = '0';
             setTimeout(() => {
                 document.getElementById('landing-page').style.display = 'none';
                 document.getElementById('main-app').style.display = 'flex';
-                document.getElementById('welcomeMsg').innerText = `خوش آمدی ${name} عزیز!`;
+                document.getElementById('welcomeMsg').innerText = `خوش آمدی ${loggedInUser.name} عزیز!`;
             }, 500);
         }
 
